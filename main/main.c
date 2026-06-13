@@ -91,79 +91,33 @@ int doom_get_sfx_lump_num(sfxinfo_t *sfx) {
 	return W_GetNumForName(namebuf);
 }
 
+// Audio is disabled on CrossPad for the first milestone (doom_init_sound returns
+// false). These sound-module entry points are kept so DG_sound_module stays a
+// valid table, but they are no-ops — they don't touch the mcugdx audio backend
+// (whose mcugdx_sound_t layout changed and which we never initialise here).
 void doom_update_sound(void) {
-	// no-op
 }
 
 void doom_update_sound_params(int handle, int vol, int sep) {
-	mcugdx_sound_set_volume(handle, vol);
+	(void)handle; (void)vol; (void)sep;
 }
 
 int doom_start_sound(sfxinfo_t *sfxinfo, int channel, int vol, int sep) {
-	if (sfxinfo->driver_data) {
-		return mcugdx_sound_play((mcugdx_sound_t *) sfxinfo->driver_data, vol, sep, MCUGDX_SINGLE_SHOT);
-	} else {
-		return -1;
-	}
+	(void)sfxinfo; (void)channel; (void)vol; (void)sep;
+	return -1;
 }
 
 void doom_stop_sound(int handle) {
-	mcugdx_sound_stop(handle);
+	(void)handle;
 }
 
 boolean doom_sound_is_playing(int handle) {
-	return mcugdx_sound_is_playing(handle);
+	(void)handle;
+	return false;
 }
 
 void doom_precache_sounds(sfxinfo_t *sounds, int num_sounds) {
-	for (int i = 0; i < num_sounds; i++) {
-		char namebuf[9];
-		sfxinfo_t *sfxinfo = &sounds[i];
-		get_sfx_lump_num(sfxinfo, namebuf, sizeof(namebuf));
-		sfxinfo->lumpnum = W_CheckNumForName(namebuf);
-		if (sounds[i].lumpnum == -1) {
-			continue;
-		}
-		unsigned int lumpnum = sfxinfo->lumpnum;
-		byte *data = W_CacheLumpNum(lumpnum, PU_STATIC);
-		unsigned int lumplen = W_LumpLength(lumpnum);
-
-		if (lumplen < 8 || data[0] != 0x03 || data[1] != 0x00) {
-			W_ReleaseLumpNum(lumpnum);
-			continue;
-		}
-
-		int samplerate = (data[3] << 8) | data[2];
-		unsigned int length = (data[7] << 24) | (data[6] << 16) | (data[5] << 8) | data[4];
-
-		mcugdx_log("DOOM_AUDIO", "Caching sound: %s, sample rate: %li, length: %li", namebuf, samplerate, length);
-
-		if (length > lumplen - 8 || length <= 48) {
-			W_ReleaseLumpNum(lumpnum);
-			continue;
-		}
-
-		data += 16;
-		length -= 32;
-
-		mcugdx_sound_t *sound = mcugdx_mem_alloc(sizeof(mcugdx_sound_t), MCUGDX_MEM_EXTERNAL);
-		sound->channels = MCUGDX_MONO;
-		sound->sample_rate = samplerate;
-		sound->frames = mcugdx_mem_alloc(length * sizeof(int16_t), MCUGDX_MEM_EXTERNAL);
-		sound->num_frames = length;
-		for (int j = 0; j < length; j++) {
-			float sample = data[j] / 127.5 - 1;
-			sound->frames[j] = (int16_t) (sample * 32767.0f);
-		}
-
-		// mcugdx_sound_play(sound, 255, MCUGDX_SINGLE_SHOT);
-		// uint32_t duration_ms = (uint32_t) ((length / (double) samplerate) * 1000);
-		// mcugdx_sleep(duration_ms);
-
-		W_ReleaseLumpNum(lumpnum);
-
-		sfxinfo->driver_data = sound;
-	}
+	(void)sounds; (void)num_sounds;
 }
 
 static snddevice_t doom_sound_devices[] = {

@@ -22,4 +22,7 @@ idf_component_register(
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error -w)
 
 # Bake data/Doom1.WAD into the `rofs` flash partition (see partitions.csv).
-mcugdx_create_rofs_partition(rofs "${CMAKE_CURRENT_SOURCE_DIR}/../data/")
+# NOTE: no trailing slash — rofs.sh strips "${INPUT_DIR}/" from each path, so a
+# trailing slash would leave the absolute path as the in-rofs filename and DOOM
+# would fail to find "Doom1.WAD".
+mcugdx_create_rofs_partition(rofs "${CMAKE_CURRENT_SOURCE_DIR}/../data")

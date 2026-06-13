@@ -339,8 +339,9 @@ void I_SetPalette(byte *palette) {
 		uint8_t g = gammatable[usegamma][*palette++];
 		uint8_t b = gammatable[usegamma][*palette++];
 
-		// Convert RGB to RGB565 format
-		uint16_t rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+		// Convert to BGR565 (R and B swapped) to match the CrossPad panel, which
+		// is wired BGR (same as the BSP's rgb_ele_order = BGR).
+		uint16_t rgb565 = ((b & 0xF8) << 8) | ((g & 0xFC) << 3) | (r >> 3);
 
 		// Store the RGB565 color directly
 		colors[i] = swap_bytes(rgb565);

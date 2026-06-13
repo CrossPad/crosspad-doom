@@ -338,7 +338,13 @@ void mcugdx_display_set_orientation(mcugdx_display_orientation_t orientation) {
 			display.height = display.native_height;
 			break;
 		case MCUGDX_LANDSCAPE:
-			madctl = (MADCTL_MY | MADCTL_MV | pixel_order);
+			// CrossPad ILI9341 is 320-wide native (BSP drives it 320x240 with
+			// MV=0). Using MADCTL_MV here switches the panel to 240-wide and the
+			// 320-wide writes wrap -> diagonal shear. Match the BSP instead:
+			// MX|MY (== panel_mirror(true,true)), NO MV.
+			// BGR to match the physical panel (same as the BSP). DOOM's palette
+			// is patched to emit BGR565 so colours come out correct.
+			madctl = (MADCTL_MX | MADCTL_MY | pixel_order);
 			display.width = display.native_height;
 			display.height = display.native_width;
 			break;

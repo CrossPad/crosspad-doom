@@ -137,15 +137,12 @@ R_MapPlane
     fixed_t	length;
     unsigned	index;
 
-#ifdef RANGECHECK
-    if (x2 < x1
-     || x1 < 0
-     || x2 >= viewwidth
-     || y > viewheight)
+    // CrossPad: a desynced attract-mode demo can feed out-of-range spans here.
+    // Skip the bad span instead of I_Error-ing (which reboots the device).
+    if (x2 < x1 || x1 < 0 || x2 >= viewwidth || y < 0 || y > viewheight)
     {
-	I_Error ("R_MapPlane: %i, %i at %i",x1,x2,y);
+	return;
     }
-#endif
 
     if (planeheight != cachedheight[y])
     {

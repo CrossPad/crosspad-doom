@@ -234,5 +234,9 @@ void app_main() {
 	mcugdx_log(TAG, "Game created");
 	while (true) {
 		doomgeneric_Tick();
+		// Yield so the idle task runs and the task watchdog is fed. The render
+		// loop uses polling SPI (busy-wait) and never blocks otherwise, which
+		// starves IDLE0 and trips the ~5s TWDT -> reboot ("freezes after 5s").
+		mcugdx_sleep(1);
 	}
 }

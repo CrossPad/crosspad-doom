@@ -1,5 +1,10 @@
 CONFIG_IDF_TARGET="esp32s3"
 
+# DOOM runs doomgeneric_Tick() on the main task; its renderer recurses deep
+# through the level BSP tree. The default ~3.5KB main stack overflows on real
+# levels (the attract demo's simple view fits, E1M1 doesn't) -> freeze/crash.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=40960
+
 # Performance
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

@@ -12,3 +12,5 @@ dependencies:
     version: ">=5.1.4"
   espressif/esp_lcd_ili9341:
     version: "^2.0.0"
+  espressif/led_strip:
+    version: "^2.5.0"

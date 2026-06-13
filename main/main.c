@@ -11,6 +11,7 @@
 #include "doomgeneric/doomkeys.h"
 
 #include "crosspad_stm32.h"
+#include "crosspad_leds.h"
 
 #define TAG "DOOM"
 
@@ -181,15 +182,25 @@ void DG_SleepMs(uint32_t ms) {
 //    8  9 10 11        8  = turn left      12 = ENTER (confirm)
 //   12 13 14 15        9  = back          10 = turn right
 // Unmapped pads are ignored. 0 means "no key".
+// Pad bitmap bit index = printed PAD label - 1 (bit 0 = PAD 1 ... bit 15 = PAD 16).
+// Cross d-pad + a function cluster:
+//   PAD 10 = forward,  PAD 2 = back,  PAD 5 = turn left,  PAD 7 = turn right,
+//   PAD 6  = fire (DOOM has no jump),
+//   PAD 13 = use,  PAD 14 = menu(Esc),  PAD 15 = enter,  PAD 16 = map(Tab),
+//   PAD 12 = run,  PAD 8 = strafe left,  PAD 4 = strafe right.
 static const unsigned char pad_to_doomkey[16] = {
-		[0]  = KEY_ESCAPE,
-		[1]  = KEY_UPARROW,
-		[3]  = KEY_FIRE,
-		[8]  = KEY_LEFTARROW,
-		[9]  = KEY_DOWNARROW,
-		[10] = KEY_RIGHTARROW,
-		[11] = KEY_USE,
-		[12] = KEY_ENTER,
+		[9]  = KEY_UPARROW,     // PAD 10  up / forward
+		[1]  = KEY_DOWNARROW,   // PAD 2   down / back
+		[4]  = KEY_LEFTARROW,   // PAD 5   turn left
+		[6]  = KEY_RIGHTARROW,  // PAD 7   turn right
+		[5]  = KEY_FIRE,        // PAD 6   fire ("jump")
+		[12] = KEY_USE,         // PAD 13  use / open
+		[13] = KEY_ESCAPE,      // PAD 14  menu
+		[14] = KEY_ENTER,       // PAD 15  enter / confirm
+		[15] = KEY_TAB,         // PAD 16  automap
+		[11] = KEY_RSHIFT,      // PAD 12  run
+		[7]  = KEY_STRAFE_L,    // PAD 8   strafe left
+		[3]  = KEY_STRAFE_R,    // PAD 4   strafe right
 };
 
 static uint16_t g_pads_reported = 0;
@@ -224,6 +235,9 @@ void app_main() {
 	// CrossPad input + LCD backlight live on the STM32 co-processor (I2C @0x42).
 	crosspad_stm32_init();
 	crosspad_stm32_set_brightness(90);
+
+	// Light the pad LEDs for the DOOM layout (cross = red, functions = blue).
+	crosspad_leds_init();
 
 	// No audio for now: CrossPad audio is dual ES8388 over I2S, and the upstream
 	// I2S pins (bclk=47/ws=21) collide with the LCD (MOSI=47/DC=21). doom_init_sound

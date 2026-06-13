@@ -13,9 +13,9 @@ set(SRC_DOOM
 )
 
 idf_component_register(
-    SRCS "main.c" "crosspad_stm32.c" "${SRC_DOOM}"
+    SRCS "main.c" "crosspad_stm32.c" "crosspad_leds.c" "${SRC_DOOM}"
     INCLUDE_DIRS "."
-    REQUIRES mcugdx driver esp_common esp_timer
+    REQUIRES mcugdx driver esp_common esp_timer espressif__led_strip
 )
 
 # doomgeneric is old C with lots of benign warnings — don't let -Werror kill it.

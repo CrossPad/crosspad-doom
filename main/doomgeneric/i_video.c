@@ -339,11 +339,10 @@ void I_SetPalette(byte *palette) {
 		uint8_t g = gammatable[usegamma][*palette++];
 		uint8_t b = gammatable[usegamma][*palette++];
 
-		// Convert to BGR565 (R and B swapped) to match the CrossPad panel, which
-		// is wired BGR (same as the BSP's rgb_ele_order = BGR).
-		uint16_t rgb565 = ((b & 0xF8) << 8) | ((g & 0xFC) << 3) | (r >> 3);
-
-		// Store the RGB565 color directly
+		// Standard RGB565 (R high), byte-swapped: esp_lcd sends the buffer
+		// little-endian and the panel reads MSB-first, so the framebuffer must
+		// hold big-endian pixels (same as LVGL's LV_COLOR_16_SWAP).
+		uint16_t rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 		colors[i] = swap_bytes(rgb565);
 	}
 

@@ -1,376 +1,178 @@
-// Adapted from:
+// CrossPad display backend for mcugdx — esp_lcd + esp_lcd_ili9341, matching the
+// CrossPad BSP exactly (the BSP renders correct geometry AND colours, so this is
+// the proven path; the old nopnop2002 raw-SPI driver scrambled this panel's
+// colours irrecoverably).
 //
-// - https://github.com/nopnop2002/esp-idf-st7789
-// - https://github.com/nopnop2002/esp-idf-ili9340/tree/master
+// mcugdx keeps drawing into display.frame_buffer (PSRAM). mcugdx_display_show()
+// pushes it to the panel in horizontal stripes via a small internal DMA bounce
+// buffer (esp_lcd can't reliably DMA straight from PSRAM here).
 //
-// Both licensed under:
-//
-// MIT License
-//
-// Copyright (c) 2020 nopnop2002
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-//
-// - https://github.com/adafruit/Adafruit_ILI9341
-//
-// Licensed under MIT, but has no LICENSE file in repository, just these paragraphs
-//
-// Adafruit invests time and resources providing this open source code, please
-// support Adafruit and open-source hardware by purchasing products from Adafruit!
-//
-// Written by Limor Fried/Ladyada for Adafruit Industries. MIT license, all text
-// above must be included in any redistribution
-
+// Panel config (components/bsp/crosspad): ILI9341 320x240, SPI3 @40MHz, BGR,
+// 16bpp, MOSI=47 SCK=14 CS=13 DC=21 RST=18, custom vendor init + mirror(1,1).
+// NOTE: no esp_lcd_panel_reset() — the BSP skips it (RST shared w/ touch,
+// reset_active_high=1 would hold an active-low panel in reset -> white).
 
 #include "display.h"
 
 #include <string.h>
-#include <inttypes.h>
-#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#include <driver/spi_master.h>
-#include <driver/gpio.h>
+#include "freertos/semphr.h"
 #include "esp_heap_caps.h"
-#include "log.h"
+#include "esp_log.h"
+
+#include "driver/gpio.h"
+#include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_ili9341.h"
 
 #define TAG "mcugdx_display"
 
-#define BUFFER_SIZE 32768
+#define CP_LCD_MOSI     47
+#define CP_LCD_SCK      14
+#define CP_LCD_CS       13
+#define CP_LCD_DC       21
+#define CP_LCD_RST      18
+#define CP_LCD_SPI_HOST SPI3_HOST
+#define CP_LCD_PCLK_HZ  (40 * 1000 * 1000)
+#define CP_LCD_H_RES    320
+#define CP_LCD_V_RES    240
+#define CP_STRIPE_ROWS  24
 
-#define MADCTL_MY 0x80 ///< Bottom to top
-#define MADCTL_MX 0x40 ///< Right to left
-#define MADCTL_MV 0x20 ///< Reverse Mode
-#define MADCTL_ML 0x10 ///< LCD refresh Bottom to top
-#define MADCTL_RGB 0x00///< Red-Green-Blue pixel order
-#define MADCTL_BGR 0x08///< Blue-Green-Red pixel order
-#define MADCTL_MH 0x04 ///< LCD refresh right to left
-#define MADCTL 0x36
-
-extern size_t internal_mem;
+static const ili9341_lcd_init_cmd_t vendor_specific_init[] = {
+    {0xC8, (uint8_t []){0xFF, 0x93, 0x42}, 3, 0},
+    {0xC0, (uint8_t []){0x0E, 0x0E}, 2, 0},
+    {0xC5, (uint8_t []){0xD0}, 1, 0},
+    {0xC1, (uint8_t []){0x02}, 1, 0},
+    {0xB4, (uint8_t []){0x02}, 1, 0},
+    {0xE0, (uint8_t []){0x00, 0x03, 0x08, 0x06, 0x13, 0x09, 0x39, 0x39, 0x48, 0x02, 0x0a, 0x08, 0x17, 0x17, 0x0F}, 15, 0},
+    {0xE1, (uint8_t []){0x00, 0x28, 0x29, 0x01, 0x0d, 0x03, 0x3f, 0x33, 0x52, 0x04, 0x0f, 0x0e, 0x37, 0x38, 0x0F}, 15, 0},
+    {0xB1, (uint8_t []){00, 0x1B}, 2, 0},
+    {0x36, (uint8_t []){0x08}, 1, 0},
+    {0x3A, (uint8_t []){0x55}, 1, 0},
+    {0xB7, (uint8_t []){0x06}, 1, 0},
+    {0x11, (uint8_t []){0}, 0x80, 0},
+    {0x29, (uint8_t []){0}, 0x80, 0},
+    {0, (uint8_t []){0}, 0xff, 0},
+};
 
 mcugdx_display_t display;
-static mcugdx_display_driver_t driver;
-static int dc;
-static spi_device_handle_t spi_handle;
-static uint8_t pixel_order = MADCTL_RGB;
 
-void pin_mode(int pin, gpio_mode_t mode, int level) {
-	gpio_reset_pin(pin);
-	gpio_set_direction(pin, mode);
-	gpio_set_level(pin, level);
-}
+static esp_lcd_panel_handle_t    s_panel = NULL;
+static esp_lcd_panel_io_handle_t s_io    = NULL;
+static SemaphoreHandle_t         s_flush_done = NULL;
+static uint16_t                 *s_bounce = NULL;
 
-void delay(int ms) {
-	int _ms = ms + (portTICK_PERIOD_MS - 1);
-	vTaskDelay(_ms / portTICK_PERIOD_MS);
-}
-
-void spi_write_bytes(spi_device_handle_t device, const uint8_t *data, size_t length) {
-	spi_transaction_t SPITransaction;
-	esp_err_t ret;
-
-	if (length > 0) {
-		memset(&SPITransaction, 0, sizeof(spi_transaction_t));
-		SPITransaction.length = length * 8;
-		SPITransaction.tx_buffer = data;
-		ret = spi_device_polling_transmit(device, &SPITransaction);
-		assert(ret == ESP_OK);
-	}
-}
-
-void spi_write_command(spi_device_handle_t device, int dc, uint8_t cmd) {
-	static uint8_t byte = 0;
-	byte = cmd;
-	gpio_set_level(dc, 0);
-	spi_write_bytes(device, &byte, 1);
-}
-
-void spi_write_data_byte(spi_device_handle_t device, int dc, uint8_t data) {
-	static uint8_t byte = 0;
-
-	byte = data;
-	gpio_set_level(dc, 1);
-	spi_write_bytes(device, &byte, 1);
-}
-
-
-void spi_write_data_word(spi_device_handle_t device, int dc, uint16_t data) {
-	static uint8_t bytes[2];
-	bytes[0] = (data >> 8) & 0xFF;
-	bytes[1] = data & 0xFF;
-	gpio_set_level(dc, 1);
-	spi_write_bytes(device, bytes, 2);
-}
-
-void spi_write_addr(spi_device_handle_t device, int dc, uint16_t addr1, uint16_t addr2) {
-	static uint8_t bytes[4];
-	bytes[0] = (addr1 >> 8) & 0xFF;
-	bytes[1] = addr1 & 0xFF;
-	bytes[2] = (addr2 >> 8) & 0xFF;
-	bytes[3] = addr2 & 0xFF;
-	gpio_set_level(dc, 1);
-	spi_write_bytes(device, bytes, 4);
-}
-
-void init_st7789(spi_device_handle_t device, int dc) {
-	spi_write_command(device, dc, 0x01);//Software Reset
-	delay(150);
-
-	spi_write_command(device, dc, 0x11);//Sleep Out
-	delay(10);
-
-	spi_write_command(device, dc, 0x3A);//Interface Pixel Format
-	spi_write_data_byte(device, dc, 0x55);
-	delay(10);
-
-	spi_write_command(device, dc, 0x36);//Memory Data Access Control
-	spi_write_data_byte(device, dc, pixel_order);
-
-	spi_write_command(device, dc, 0x21);//Display Inversion On
-	delay(10);
-
-	spi_write_command(device, dc, 0x13);//Normal Display Mode On
-	delay(10);
-
-	spi_write_command(device, dc, 0x29);//Display ON
-	delay(10);
-}
-
-void init_ili9143(spi_device_handle_t device, int dc) {
-	spi_write_command(device, dc, 0xC0);//Power Control 1
-	spi_write_data_byte(device, dc, 0x23);
-
-	spi_write_command(device, dc, 0xC1);//Power Control 2
-	spi_write_data_byte(device, dc, 0x10);
-
-	spi_write_command(device, dc, 0xC5);//VCOM Control 1
-	spi_write_data_byte(device, dc, 0x3E);
-	spi_write_data_byte(device, dc, 0x28);
-
-	spi_write_command(device, dc, 0xC7);//VCOM Control 2
-	spi_write_data_byte(device, dc, 0x86);
-
-	spi_write_command(device, dc, 0x36);                //Memory Access Control
-	spi_write_data_byte(device, dc, pixel_order);//Right top start, BGR color filter panel
-	//spi_write_data_byte(device, dc, 0x00);//Right top start, RGB color filter panel
-
-	spi_write_command(device, dc, 0x3A);  //Pixel Format Set
-	spi_write_data_byte(device, dc, 0x55);//65K color: 16-bit/pixel
-
-	spi_write_command(device, dc, 0x21);//Display Inversion OFF
-
-	spi_write_command(device, dc, 0xB1);//Frame Rate Control
-	spi_write_data_byte(device, dc, 0x00);
-	spi_write_data_byte(device, dc, 0x18);
-
-	spi_write_command(device, dc, 0xB6);//Display Function Control
-	spi_write_data_byte(device, dc, 0x08);
-	spi_write_data_byte(device, dc, 0xA2);// REV:1 GS:0 SS:0 SM:0
-	spi_write_data_byte(device, dc, 0x27);
-	spi_write_data_byte(device, dc, 0x00);
-
-	spi_write_command(device, dc, 0x26);//Gamma Set
-	spi_write_data_byte(device, dc, 0x01);
-
-	spi_write_command(device, dc, 0xE0);//Positive Gamma Correction
-	spi_write_data_byte(device, dc, 0x0F);
-	spi_write_data_byte(device, dc, 0x31);
-	spi_write_data_byte(device, dc, 0x2B);
-	spi_write_data_byte(device, dc, 0x0C);
-	spi_write_data_byte(device, dc, 0x0E);
-	spi_write_data_byte(device, dc, 0x08);
-	spi_write_data_byte(device, dc, 0x4E);
-	spi_write_data_byte(device, dc, 0xF1);
-	spi_write_data_byte(device, dc, 0x37);
-	spi_write_data_byte(device, dc, 0x07);
-	spi_write_data_byte(device, dc, 0x10);
-	spi_write_data_byte(device, dc, 0x03);
-	spi_write_data_byte(device, dc, 0x0E);
-	spi_write_data_byte(device, dc, 0x09);
-	spi_write_data_byte(device, dc, 0x00);
-
-	spi_write_command(device, dc, 0xE1);//Negative Gamma Correction
-	spi_write_data_byte(device, dc, 0x00);
-	spi_write_data_byte(device, dc, 0x0E);
-	spi_write_data_byte(device, dc, 0x14);
-	spi_write_data_byte(device, dc, 0x03);
-	spi_write_data_byte(device, dc, 0x11);
-	spi_write_data_byte(device, dc, 0x07);
-	spi_write_data_byte(device, dc, 0x31);
-	spi_write_data_byte(device, dc, 0xC1);
-	spi_write_data_byte(device, dc, 0x48);
-	spi_write_data_byte(device, dc, 0x08);
-	spi_write_data_byte(device, dc, 0x0F);
-	spi_write_data_byte(device, dc, 0x0C);
-	spi_write_data_byte(device, dc, 0x31);
-	spi_write_data_byte(device, dc, 0x36);
-	spi_write_data_byte(device, dc, 0x0F);
-
-	spi_write_command(device, dc, 0x11);//Sleep Out
-	delay(120);
-
-	spi_write_command(device, dc, 0x29);//Display ON
+static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_io_handle_t io,
+                                          esp_lcd_panel_io_event_data_t *edata,
+                                          void *ctx) {
+    (void)io; (void)edata; (void)ctx;
+    BaseType_t hp = pdFALSE;
+    xSemaphoreGiveFromISR(s_flush_done, &hp);
+    return hp == pdTRUE;
 }
 
 bool mcugdx_display_init(mcugdx_display_config_t *display_cfg) {
-	// Setup SPI2 bus
-	spi_bus_config_t bus_config = {
-			.mosi_io_num = display_cfg->mosi,
-			.miso_io_num = -1,
-			.sclk_io_num = display_cfg->sck,
-			.quadhd_io_num = -1,
-			.quadwp_io_num = -1,
-			.data4_io_num = -1,
-			.data5_io_num = -1,
-			.data6_io_num = -1,
-			.data7_io_num = -1,
-			.max_transfer_sz = BUFFER_SIZE * 8,
-			.flags = 0};
+    (void)display_cfg;
 
-	esp_err_t ret = spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO);
-	if (ret != ESP_OK) {
-		return false;
-	}
-	mcugdx_log(TAG, "Initialized SPI bus");
+    display.native_width  = CP_LCD_H_RES;
+    display.native_height = CP_LCD_V_RES;
+    display.width         = CP_LCD_H_RES;
+    display.height        = CP_LCD_V_RES;
+    display.orientation   = MCUGDX_LANDSCAPE;
 
-	// Setup up display device, starting with CS and DC pins followed by adding the SPI device
-	if (display_cfg->cs >= 0) pin_mode(display_cfg->cs, GPIO_MODE_OUTPUT, 0);
-	pin_mode(display_cfg->dc, GPIO_MODE_OUTPUT, 0);
+    display.frame_buffer = (uint16_t *) heap_caps_malloc(
+        (size_t)CP_LCD_H_RES * CP_LCD_V_RES * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    s_bounce = (uint16_t *) heap_caps_malloc(
+        (size_t)CP_LCD_H_RES * CP_STRIPE_ROWS * sizeof(uint16_t),
+        MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!display.frame_buffer || !s_bounce) {
+        ESP_LOGE(TAG, "fb/bounce alloc failed");
+        return false;
+    }
+    memset(display.frame_buffer, 0, (size_t)CP_LCD_H_RES * CP_LCD_V_RES * sizeof(uint16_t));
+    s_flush_done = xSemaphoreCreateBinary();
 
-	if (display_cfg->reset >= 0) {
-		mcugdx_log(TAG, "Resetting display via pin %i", display_cfg->reset);
-		pin_mode(display_cfg->reset, GPIO_MODE_OUTPUT, 1);
-		delay(100);
-		gpio_set_level(display_cfg->reset, 1);
-		delay(100);
-		gpio_set_level(display_cfg->reset, 0);
-		delay(100);
-		gpio_set_level(display_cfg->reset, 1);
-		delay(100);
-	}
+    // Manual hardware reset — the panel RST (GPIO18) is ACTIVE-LOW (per the
+    // nopnop2002 driver that successfully drove this panel: pulse high->low->high).
+    // esp_lcd's reset_active_high=1 would be the wrong polarity, so we reset by
+    // hand here and tell esp_lcd not to touch RST (reset_gpio_num = -1). Without a
+    // proper reset the panel stays in an undefined state -> white screen.
+    gpio_config_t rst_cfg = {
+        .pin_bit_mask = 1ULL << CP_LCD_RST,
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&rst_cfg);
+    gpio_set_level(CP_LCD_RST, 1); vTaskDelay(pdMS_TO_TICKS(20));
+    gpio_set_level(CP_LCD_RST, 0); vTaskDelay(pdMS_TO_TICKS(20));  // assert (active-low)
+    gpio_set_level(CP_LCD_RST, 1); vTaskDelay(pdMS_TO_TICKS(150)); // release
 
-	spi_device_interface_config_t device_config;
-	memset(&device_config, 0, sizeof(device_config));
-	switch (display_cfg->driver) {
-		case MCUGDX_ST7789:
-			device_config.clock_speed_hz = SPI_MASTER_FREQ_80M;
-			pixel_order = MADCTL_RGB;
-			break;
-		case MCUGDX_ST7796:
-			device_config.clock_speed_hz = SPI_MASTER_FREQ_80M;
-			pixel_order = MADCTL_BGR;
-			break;
-		case MCUGDX_ILI9341:
-			device_config.clock_speed_hz = SPI_MASTER_FREQ_40M;
-			pixel_order = MADCTL_BGR;
-			break;
-		default:
-			mcugdx_loge(TAG, "Unknown display driver %i\n", display_cfg->driver);
-			return false;
-	}
-	device_config.queue_size = 7;
-	device_config.mode = 3;
-	device_config.flags = SPI_DEVICE_NO_DUMMY;
-	device_config.spics_io_num = display_cfg->cs >= 0 ? display_cfg->cs : -1;
+    const spi_bus_config_t buscfg = {
+        .sclk_io_num = CP_LCD_SCK,
+        .mosi_io_num = CP_LCD_MOSI,
+        .miso_io_num = -1,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = CP_LCD_H_RES * CP_STRIPE_ROWS * sizeof(uint16_t) + 64,
+    };
+    if (spi_bus_initialize(CP_LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO) != ESP_OK) {
+        ESP_LOGE(TAG, "spi_bus_initialize failed");
+        return false;
+    }
 
-	ret = spi_bus_add_device(SPI2_HOST, &device_config, &spi_handle);
-	mcugdx_log(TAG, "Added SPI display device");
+    const esp_lcd_panel_io_spi_config_t io_config = {
+        .dc_gpio_num = CP_LCD_DC,
+        .cs_gpio_num = CP_LCD_CS,
+        .pclk_hz = CP_LCD_PCLK_HZ,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .spi_mode = 0,
+        .trans_queue_depth = 10,
+        .on_color_trans_done = on_color_trans_done,
+    };
+    if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)CP_LCD_SPI_HOST, &io_config, &s_io) != ESP_OK) {
+        ESP_LOGE(TAG, "new_panel_io_spi failed");
+        return false;
+    }
 
-	// Setup internal display struct
-	driver = display_cfg->driver;
-	display.native_width = display.width = display_cfg->native_width;
-	display.native_height = display.height = display_cfg->native_height;
-	display.orientation = MCUGDX_PORTRAIT;
-	dc = display_cfg->dc;
-	mcugdx_mem_print();
-	mcugdx_log(TAG, "Largest DMA block %li", heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
-	size_t num_bytes = display.width * display.height * sizeof(uint16_t);
-	mcugdx_log(TAG, "Trying to allocate %li frame buffer bytes", num_bytes);
-	display.frame_buffer = heap_caps_calloc(num_bytes, 1, MALLOC_CAP_DMA);
-	mcugdx_log(TAG, "Frame buffer at %p\n", display.frame_buffer);
-	internal_mem += display.width * display.height * sizeof(uint16_t);
+    const ili9341_vendor_config_t vendor_config = {
+        .init_cmds = &vendor_specific_init[0],
+        .init_cmds_size = sizeof(vendor_specific_init) / sizeof(ili9341_lcd_init_cmd_t),
+    };
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = -1,  // we reset RST manually above (active-low)
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,  // DOOM emits standard RGB565
+        .bits_per_pixel = 16,
+        .vendor_config = (void *)&vendor_config,
+    };
+    if (esp_lcd_new_panel_ili9341(s_io, &panel_config, &s_panel) != ESP_OK) {
+        ESP_LOGE(TAG, "new_panel_ili9341 failed");
+        return false;
+    }
 
-	// Send init commands to display
-	switch (driver) {
-		case MCUGDX_ST7789:
-			init_st7789(spi_handle, dc);
-			break;
-		case MCUGDX_ILI9341:
-		case MCUGDX_ST7796:
-			init_ili9143(spi_handle, dc);
-			break;
-		default:
-			mcugdx_loge(TAG, "Unknown display driver %i\n", driver);
-			return false;
-	}
+    esp_lcd_panel_init(s_panel);
+    esp_lcd_panel_mirror(s_panel, true, true);
+    esp_lcd_panel_disp_on_off(s_panel, true);
 
-	// Set orientation to portrait by default
-	mcugdx_display_set_orientation(MCUGDX_PORTRAIT);
-	return true;
+    ESP_LOGI(TAG, "CrossPad ILI9341 %dx%d up (esp_lcd)", CP_LCD_H_RES, CP_LCD_V_RES);
+    return true;
 }
 
 void mcugdx_display_set_orientation(mcugdx_display_orientation_t orientation) {
-	uint8_t madctl = orientation = orientation % 4;
-
-	switch (orientation) {
-		case MCUGDX_PORTRAIT:
-			madctl = (MADCTL_MY | pixel_order);
-			display.width = display.native_width;
-			display.height = display.native_height;
-			break;
-		case MCUGDX_LANDSCAPE:
-			// CrossPad ILI9341 is 320-wide native (BSP drives it 320x240 with
-			// MV=0). Using MADCTL_MV here switches the panel to 240-wide and the
-			// 320-wide writes wrap -> diagonal shear. Match the BSP instead:
-			// MX|MY (== panel_mirror(true,true)), NO MV.
-			// BGR to match the physical panel (same as the BSP). DOOM's palette
-			// is patched to emit BGR565 so colours come out correct.
-			madctl = (MADCTL_MX | MADCTL_MY | pixel_order);
-			display.width = display.native_height;
-			display.height = display.native_width;
-			break;
-		default:
-			mcugdx_loge(TAG, "Unsupported display orientation %i\n", orientation);
-	}
-	spi_write_command(spi_handle, dc, MADCTL);
-	spi_write_data_byte(spi_handle, dc, madctl);
-
-	display.orientation = orientation;
+    (void)orientation;
+    display.orientation = MCUGDX_LANDSCAPE;
 }
 
-void mcugdx_display_show() {
-	spi_write_command(spi_handle, dc, 0x2A);
-	spi_write_addr(spi_handle, dc, 0, display.width - 1);
-	spi_write_command(spi_handle, dc, 0x2B);
-	spi_write_addr(spi_handle, dc, 0, display.height - 1);
-	spi_write_command(spi_handle, dc, 0x2C);
-
-	uint32_t size = display.width * display.height * 2;
-	uint8_t *frame_buffer = (uint8_t *) display.frame_buffer;
-	gpio_set_level(dc, 1);
-	while (size > 0) {
-		uint16_t bs = (size > BUFFER_SIZE) ? BUFFER_SIZE : size;
-		spi_write_bytes(spi_handle, frame_buffer, bs);
-		size -= bs;
-		frame_buffer += bs;
-	}
+void mcugdx_display_show(void) {
+    if (!s_panel) return;
+    for (int y = 0; y < CP_LCD_V_RES; y += CP_STRIPE_ROWS) {
+        int rows = (y + CP_STRIPE_ROWS <= CP_LCD_V_RES) ? CP_STRIPE_ROWS : (CP_LCD_V_RES - y);
+        memcpy(s_bounce, display.frame_buffer + (size_t)y * CP_LCD_H_RES,
+               (size_t)rows * CP_LCD_H_RES * sizeof(uint16_t));
+        esp_lcd_panel_draw_bitmap(s_panel, 0, y, CP_LCD_H_RES, y + rows, s_bounce);
+        xSemaphoreTake(s_flush_done, portMAX_DELAY);
+    }
 }

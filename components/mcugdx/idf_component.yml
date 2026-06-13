@@ -10,3 +10,5 @@ issues: https://github.com/badlogic/mcugdx/issues
 dependencies:
   idf:
     version: ">=5.1.4"
+  espressif/esp_lcd_ili9341:
+    version: "^2.0.0"

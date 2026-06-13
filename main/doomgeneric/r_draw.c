@@ -117,7 +117,7 @@ void R_DrawColumn (void)
     if ((unsigned)dc_x >= SCREENWIDTH
 	|| dc_yl < 0
 	|| dc_yh >= SCREENHEIGHT)
-	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
 #endif
 
     // Framebuffer destination address.
@@ -227,7 +227,7 @@ void R_DrawColumnLow (void)
 	|| dc_yh >= SCREENHEIGHT)
     {
 
-	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
     //	dccount++;
 #endif
@@ -306,8 +306,7 @@ void R_DrawFuzzColumn (void)
     if ((unsigned)dc_x >= SCREENWIDTH
 	|| dc_yl < 0 || dc_yh >= SCREENHEIGHT)
     {
-	I_Error ("R_DrawFuzzColumn: %i to %i at %i",
-		 dc_yl, dc_yh, dc_x);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
 #endif
 
@@ -371,8 +370,7 @@ void R_DrawFuzzColumnLow (void)
     if ((unsigned)x >= SCREENWIDTH
 	|| dc_yl < 0 || dc_yh >= SCREENHEIGHT)
     {
-	I_Error ("R_DrawFuzzColumn: %i to %i at %i",
-		 dc_yl, dc_yh, dc_x);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
 #endif
 
@@ -438,8 +436,7 @@ void R_DrawTranslatedColumn (void)
 	|| dc_yl < 0
 	|| dc_yh >= SCREENHEIGHT)
     {
-	I_Error ( "R_DrawColumn: %i to %i at %i",
-		  dc_yl, dc_yh, dc_x);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
 
 #endif
@@ -487,8 +484,7 @@ void R_DrawTranslatedColumnLow (void)
 	|| dc_yl < 0
 	|| dc_yh >= SCREENHEIGHT)
     {
-	I_Error ( "R_DrawColumn: %i to %i at %i",
-		  dc_yl, dc_yh, x);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
 
 #endif
@@ -602,8 +598,7 @@ void R_DrawSpan (void)
 	|| ds_x2>=SCREENWIDTH
 	|| (unsigned)ds_y>SCREENHEIGHT)
     {
-	I_Error( "R_DrawSpan: %i to %i at %i",
-		 ds_x1,ds_x2,ds_y);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
 //	dscount++;
 #endif
@@ -731,8 +726,7 @@ void R_DrawSpanLow (void)
 	|| ds_x2>=SCREENWIDTH
 	|| (unsigned)ds_y>SCREENHEIGHT)
     {
-	I_Error( "R_DrawSpan: %i to %i at %i",
-		 ds_x1,ds_x2,ds_y);
+	return;  /* CrossPad: skip out-of-range span instead of reboot */
     }
 //	dscount++;
 #endif

@@ -2183,9 +2183,19 @@ void G_DoPlayDemo (void)
         //I_Error(message, demoversion, G_VanillaVersionCode(),
         printf(message, demoversion, G_VanillaVersionCode(),
                          DemoVersionDescription(demoversion));
+
+        // CrossPad: the bundled shareware WAD's attract demos are an older
+        // version than doomgeneric emulates. Playing them desyncs and drives the
+        // renderer out of range (R_DrawColumn / R_MapPlane RANGECHECK -> reboot
+        // ~5s in). Skip the demo and advance the title loop instead of playing
+        // a desynced one.
+        demoplayback = false;
+        gameaction = ga_nothing;
+        D_AdvanceDemo();
+        return;
     }
-    
-    skill = *demo_p++; 
+
+    skill = *demo_p++;
     episode = *demo_p++; 
     map = *demo_p++; 
     deathmatch = *demo_p++;

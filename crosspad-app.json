@@ -6,7 +6,13 @@
   "category": "games",
   "icon": "doom.png",
   "component_path": "components/crosspad-doom",
-  "platforms": ["pc"],
+  "kits": [
+    "doom"
+  ],
+  "platforms": [
+    "pc",
+    "esp-idf"
+  ],
   "requires": {
     "crosspad-core": ">=2.0.0,<3.0.0",
     "crosspad-gui": ">=2.0.0,<3.0.0"

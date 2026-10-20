@@ -21,10 +21,25 @@
 #include <mutex>
 #include <string>
 
-#include "FreeRTOS.h"
-#include "queue.h"
-#include "semphr.h"
-#include "task.h"
+// Arduino-ESP32 defines ESP_PLATFORM too, but has no *WithCaps task calls.
+#if defined(ESP_PLATFORM) && !defined(ARDUINO)
+  #define DOOM_RTOS_IDF 1
+#endif
+#if defined(ESP_PLATFORM)
+  #include <freertos/FreeRTOS.h>
+  #include <freertos/queue.h>
+  #include <freertos/semphr.h>
+  #include <freertos/task.h>
+#else
+  #include "FreeRTOS.h"
+  #include "queue.h"
+  #include "semphr.h"
+  #include "task.h"
+#endif
+#if defined(DOOM_RTOS_IDF)
+  #include <esp_heap_caps.h>
+  #include <freertos/idf_additions.h>
+#endif
 
 #include <crosspad/app/AppRegistrar.hpp>
 #include <crosspad/audio/IAudioModule.hpp>
@@ -61,6 +76,12 @@ constexpr const char* kIwads[] = {"doom1.wad", "DOOM1.WAD", "Doom1.WAD", "doom.w
 
 constexpr uint32_t kDoomStackBytes = 256 * 1024;   // the renderer recurses deep (BSP)
 constexpr UBaseType_t kDoomPriority = 1;
+#if defined(DOOM_RTOS_IDF)
+constexpr BaseType_t kDoomCore = 1;   // beside the audio task, away from LVGL's core 0
+#endif
+/// DOOM's zone, in MiB: the shareware episode plays in it, and it leaves the
+/// board's PSRAM room for the UI (doomgeneric would take 6).
+constexpr const char* kZoneMb = "4";
 constexpr uint32_t kFrameTimerMs = 15;
 /// A tap holds the key over two of DOOM's 35 Hz tics, or a ticcmd misses it.
 constexpr uint32_t kTapHoldMs = 60;
@@ -374,8 +395,10 @@ void doomTask(void*) {
     std::string iwad = s_iwad;
     char arg0[] = "doom";
     char arg1[] = "-iwad";
-    char* argv[] = {arg0, arg1, iwad.data(), nullptr};
-    doomgeneric_Create(3, argv);
+    char arg3[] = "-mb";
+    std::string mb = kZoneMb;
+    char* argv[] = {arg0, arg1, iwad.data(), arg3, mb.data(), nullptr};
+    doomgeneric_Create(5, argv);
     for (;;) doomgeneric_Tick();
 }
 
@@ -421,8 +444,17 @@ void startDoom() {
         s_audioAttached = true;
     }
     printf("[Doom] IWAD %s, saves in %s\n", s_iwad.c_str(), s_dataDir.c_str());
-    if (xTaskCreate(doomTask, "doom", kDoomStackBytes / sizeof(StackType_t), nullptr, kDoomPriority,
-                    &s_doomTask) != pdPASS) {
+#if defined(DOOM_RTOS_IDF)
+    // Its stack in PSRAM: a quarter of a megabyte of internal RAM is not there.
+    // The task never writes flash, which a PSRAM stack must not.
+    const BaseType_t made = xTaskCreatePinnedToCoreWithCaps(doomTask, "doom", kDoomStackBytes, nullptr,
+                                                            kDoomPriority, &s_doomTask, kDoomCore,
+                                                            MALLOC_CAP_SPIRAM);
+#else
+    const BaseType_t made =
+        xTaskCreate(doomTask, "doom", kDoomStackBytes / sizeof(StackType_t), nullptr, kDoomPriority, &s_doomTask);
+#endif
+    if (made != pdPASS) {
         s_doomTask = nullptr;
         showMessage("DOOM could not start: no memory for its task.");
     }

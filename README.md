@@ -49,6 +49,9 @@ saves.
 | `third_party/doomgeneric/` | upstream e257a09, with patches marked `crosspad:` (Quit, I_Error, the configuration directory, the y/n prompts, no SDL); `i_oplmusic.c` and `midifile.c` from Chocolate Doom 2.1.0 |
 | `third_party/opl/` | Chocolate Doom 2.1.0's OPL library (DBOPL), `OPL_Delay` without SDL |
 | `crosspad_pc.cmake` | the simulator's build of the C side |
+| `CMakeLists.txt` | the ESP-IDF component: built into the `doom` kit only (`crosspad-app.json` `kits`), empty in every other image |
+
+DOOM's task has a 256 kB stack (in PSRAM on the board) and a 4 MB zone.
 
 Music is DOOM's own: the MUS lumps through Chocolate Doom's OPL player and
 the DOSBox OPL emulator, as an AdLib / Sound Blaster played them.

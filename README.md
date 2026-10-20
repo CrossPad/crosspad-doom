@@ -1,30 +1,60 @@
 # crosspad-doom
 
-DOOM (via [doomgeneric](https://github.com/ozkl/doomgeneric)) running on **CrossPad**
-hardware, built on Mario Zechner's [mcugdx](https://github.com/badlogic/mcugdx)
-framework. Standalone ESP-IDF firmware — separate from the main CrossPad app.
+DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric)) as a CrossPad app:
+the one app of the `doom` firmware kit, started from the Firmware app's
+library like any other firmware and left through DOOM's own **Quit Game**,
+which switches back to the other firmware slot.
 
-## Hardware mapping (CrossPad rev2)
-- **Display:** ILI9341 320x240 SPI — MOSI=47, SCK=14, CS=13, DC=21, RST=18 (mcugdx display, landscape).
-- **Backlight + input:** STM32 co-processor over I2C @0x42 (SCL=11, SDA=12). See `main/crosspad_stm32.c`.
-- **WAD:** `data/Doom1.WAD` (shareware) baked into the `rofs` flash partition at build time.
-- **Audio:** disabled for now (upstream I2S pins collide with the LCD; ES8388 bring-up is a TODO).
+Everything goes through crosspad-core and crosspad-gui (2.x), nothing through
+a platform's own API: the pads are a pad logic (`IPadLogicHandler`), the
+encoder an LVGL group, the power click a back handler, the sound effects and
+the music a node on the audio module (`IAudioNode`), leaving the firmware the
+Firmware views' service (`IFwViewService::flowSwitchAndRestart`).
 
-## Controls (4x4 pad grid, top-left = pad 0)
-| pad | action      | pad | action      |
-|-----|-------------|-----|-------------|
-| 0   | ESC (menu)  | 3   | FIRE        |
-| 1   | forward     | 11  | USE (open)  |
-| 8   | turn left   | 12  | ENTER       |
-| 9   | back        | 10  | turn right  |
+The frame is stretched from 320x200 over as many lines as the app gets, up
+to 240 -- DOOM's 4:3 -- so a kit without a top bar shows it as on a CRT.
 
-## Build & flash
-```bash
-idf.py set-target esp32s3
-idf.py build
-idf.py -p <PORT> flash monitor   # console is on the native USB-Serial/JTAG
-```
+## Controls
 
-## Status
-First milestone: render DOOM on the LCD + pad input. Audio, encoder-turn, and
-save-games are follow-ups.
+Pads, by their printed labels (1 = bottom left, 16 = top right):
+
+| Pad | | Pad | | Pad | | Pad | |
+|---|---|---|---|---|---|---|---|
+| 13 | use | 14 | menu | 15 | enter | 16 | map |
+| 9 | | 10 | forward | 11 | | 12 | run |
+| 5 | turn left | 6 | fire | 7 | turn right | 8 | strafe left |
+| 1 | | 2 | back | 3 | | 4 | strafe right |
+
+- **Power click**: DOOM's menu, open and closed.
+- **Encoder**: in the menu up / down and click to choose; in the game the
+  weapons and click to use.
+- **Quit Game** in the menu, confirmed with the encoder: back to the firmware
+  in the other slot.
+- **Pad 16 held while the board boots**: the platform starts the main
+  firmware instead, whatever is in the slots -- the way out when DOOM's own
+  menu is no use. That is the platform's, not this app's.
+
+## Data on the card
+
+`crosspad/doom/` holds the IWAD (`doom1.wad`, the shareware one, is in
+`data/`; `doom.wad` and `doom2.wad` are found too), the configuration and the
+saves.
+
+## Layout
+
+| Path | |
+|---|---|
+| `src/DoomApp.cpp` | the app: frame, pads, encoder, power, sound node, Quit |
+| `port/` | doomgeneric's platform functions and sound module (`crosspad_doom_port.c`), the OPL driver (`crosspad_opl.c`, Chocolate Doom's `opl_sdl.c` without SDL), and what they ask of the app (`crosspad_doom_host.h`) |
+| `third_party/doomgeneric/` | upstream e257a09, with patches marked `crosspad:` (Quit, I_Error, the configuration directory, the y/n prompts, no SDL); `i_oplmusic.c` and `midifile.c` from Chocolate Doom 2.1.0 |
+| `third_party/opl/` | Chocolate Doom 2.1.0's OPL library (DBOPL), `OPL_Delay` without SDL |
+| `crosspad_pc.cmake` | the simulator's build of the C side |
+
+Music is DOOM's own: the MUS lumps through Chocolate Doom's OPL player and
+the DOSBox OPL emulator, as an AdLib / Sound Blaster played them.
+
+## Licence
+
+DOOM's source (doomgeneric, Chocolate Doom) is GPL-2.0-or-later
+(`third_party/doomgeneric/LICENSE`); the CrossPad parts are GPL-3.0-or-later.
+`data/doom1.wad` is id Software's shareware episode, distributed unmodified.

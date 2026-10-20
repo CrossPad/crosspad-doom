@@ -233,7 +233,9 @@ static boolean ReadChannelEvent(midi_event_t *event,
         return false;
     }
 
-    event->data.channel.param1 = b;
+    /* crosspad: a data byte is 7 bits; the music comes off the card, and
+     * the player indexes its tables with these. */
+    event->data.channel.param1 = b & 0x7f;
 
     // Second parameter:
 
@@ -246,7 +248,7 @@ static boolean ReadChannelEvent(midi_event_t *event,
             return false;
         }
 
-        event->data.channel.param2 = b;
+        event->data.channel.param2 = b & 0x7f;
     }
 
     return true;
@@ -575,6 +577,14 @@ static boolean ReadFileHeader(midi_file_t *file, FILE *stream)
     {
         fprintf(stderr, "ReadFileHeader: Only type 0/1 "
                                          "MIDI files supported!\n");
+        return false;
+    }
+
+    /* crosspad: ticks per beat, which the player divides by; SMPTE
+     * divisions (negative) and 0 are refused. */
+    if ((short) SDL_SwapBE16(file->header.time_division) <= 0)
+    {
+        fprintf(stderr, "ReadFileHeader: Unsupported time division!\n");
         return false;
     }
 

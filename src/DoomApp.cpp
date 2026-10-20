@@ -158,16 +158,24 @@ public:
     void onPrepare(uint32_t, uint32_t sampleRate) override { outRate_.store(sampleRate); }
     uint32_t rate() const { return outRate_.load(); }
 
-    // DOOM task
+    // DOOM task. A channel outside 0..CPDOOM_SFX_CHANNELS-1 is ignored.
+    static bool valid(int ch) { return ch >= 0 && ch < CPDOOM_SFX_CHANNELS; }
     void start(int ch, const uint8_t* pcm, uint32_t length, uint32_t rate, int vol, int sep) {
+        if (!valid(ch)) return;
         const uint32_t gen = ++started_[ch];
         push({Op::Start, static_cast<uint8_t>(ch), clampVol(vol), clampSep(sep), gen, pcm, length, rate});
     }
     void params(int ch, int vol, int sep) {
+        if (!valid(ch)) return;
         push({Op::Params, static_cast<uint8_t>(ch), clampVol(vol), clampSep(sep), started_[ch], nullptr, 0, 0});
     }
-    void stop(int ch) { push({Op::Stop, static_cast<uint8_t>(ch), 0, 0, started_[ch], nullptr, 0, 0}); }
-    bool playing(int ch) const { return finished_[ch].load(std::memory_order_acquire) != started_[ch]; }
+    void stop(int ch) {
+        if (!valid(ch)) return;
+        push({Op::Stop, static_cast<uint8_t>(ch), 0, 0, started_[ch], nullptr, 0, 0});
+    }
+    bool playing(int ch) const {
+        return valid(ch) && finished_[ch].load(std::memory_order_acquire) != started_[ch];
+    }
 
     // Audio thread
     void mix(float* out, uint32_t frames) override {

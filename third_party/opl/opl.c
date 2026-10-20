@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>   /* crosspad: SDL.h brought it in */
 
 #include "crosspad_doom_host.h"
 

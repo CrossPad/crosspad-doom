@@ -51,7 +51,7 @@ saves.
 | `crosspad_pc.cmake` | the simulator's build of the C side |
 | `CMakeLists.txt` | the ESP-IDF component: built into the `doom` kit only (`crosspad-app.json` `kits`), empty in every other image |
 
-DOOM's task has a 256 kB stack (in PSRAM on the board) and a 4 MB zone.
+DOOM's task has a 256 kB stack (in PSRAM on the board) and a 4 MB zone (3 when 4 is not free in one piece); on the board its ~260 kB of zero-initialised globals live in PSRAM too (`linker.lf`).
 
 Music is DOOM's own: the MUS lumps through Chocolate Doom's OPL player and
 the DOSBox OPL emulator, as an AdLib / Sound Blaster played them.

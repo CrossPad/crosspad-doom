@@ -56,8 +56,10 @@
 #include <CoreFoundation/CFUserNotification.h>
 #endif
 
-#define DEFAULT_RAM 6 /* MiB */
-#define MIN_RAM     6  /* MiB */
+/* crosspad: 4 MiB plays the shareware episode and leaves the board's PSRAM
+ * to its UI; 3 when 4 is not there in one piece. */
+#define DEFAULT_RAM 4 /* MiB */
+#define MIN_RAM     3  /* MiB */
 
 
 typedef struct atexit_listentry_s atexit_listentry_t;

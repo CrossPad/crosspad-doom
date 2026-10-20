@@ -79,9 +79,6 @@ constexpr UBaseType_t kDoomPriority = 1;
 #if defined(DOOM_RTOS_IDF)
 constexpr BaseType_t kDoomCore = 1;   // beside the audio task, away from LVGL's core 0
 #endif
-/// DOOM's zone, in MiB: the shareware episode plays in it, and it leaves the
-/// board's PSRAM room for the UI (doomgeneric would take 6).
-constexpr const char* kZoneMb = "4";
 constexpr uint32_t kFrameTimerMs = 15;
 /// A tap holds the key over two of DOOM's 35 Hz tics, or a ticcmd misses it.
 constexpr uint32_t kTapHoldMs = 60;
@@ -395,10 +392,8 @@ void doomTask(void*) {
     std::string iwad = s_iwad;
     char arg0[] = "doom";
     char arg1[] = "-iwad";
-    char arg3[] = "-mb";
-    std::string mb = kZoneMb;
-    char* argv[] = {arg0, arg1, iwad.data(), arg3, mb.data(), nullptr};
-    doomgeneric_Create(5, argv);
+    char* argv[] = {arg0, arg1, iwad.data(), nullptr};
+    doomgeneric_Create(3, argv);
     for (;;) doomgeneric_Tick();
 }
 

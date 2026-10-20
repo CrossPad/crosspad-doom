@@ -28,8 +28,17 @@ foreach(_i RANGE ${_doom_last})
     endif()
 endforeach()
 
+# linker.lf: DOOM's zero-initialised globals (the renderer's visplanes,
+# openings, drawsegs -- ~260 kB) in PSRAM; in internal RAM they overflowed
+# dram0 by 200 kB. Nothing in them is touched with the cache off.
+set(_doom_ldfragments "")
+if(_doom_srcs)
+    set(_doom_ldfragments "linker.lf")
+endif()
+
 idf_component_register(
     SRCS ${_doom_srcs}
+    LDFRAGMENTS ${_doom_ldfragments}
     PRIV_INCLUDE_DIRS
         "third_party/doomgeneric"
         "third_party/opl"

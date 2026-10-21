@@ -1,0 +1,23 @@
+{
+  "name": "DOOM",
+  "id": "doom",
+  "version": "0.1.0",
+  "description": "DOOM (doomgeneric) on the pads, the encoder and the panel; the one app of the doom firmware kit",
+  "category": "games",
+  "icon": "doom.png",
+  "component_path": "components/crosspad-doom",
+  "kits": [
+    "doom"
+  ],
+  "platforms": [
+    "pc",
+    "esp-idf"
+  ],
+  "requires": {
+    "crosspad-core": ">=2.0.0,<3.0.0",
+    "crosspad-gui": ">=2.0.0,<3.0.0"
+  },
+  "changelog": [
+    "0.1.0: DOOM as a CrossPad app: frame, pads, encoder, power menu, sound effects through the audio module, Quit back to the other firmware slot"
+  ]
+}

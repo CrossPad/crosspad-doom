@@ -1,6 +1,3 @@
 build/
-sdkconfig
-sdkconfig.old
-managed_components/
-*.bin
-!data/Doom1.WAD
+.cache/
+compile_commands.json

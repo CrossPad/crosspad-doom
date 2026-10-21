@@ -1,0 +1,20 @@
+{
+    "name": "crosspad-doom",
+    "version": "0.1.0",
+    "license": "GPL-3.0-or-later",
+    "description": "DOOM (doomgeneric) on the pads, the encoder and the panel; the one app of the doom firmware kit",
+    "keywords": [
+        "crosspad",
+        "doom",
+        "game",
+        "doomgeneric",
+        "lvgl"
+    ],
+    "dependencies": {
+        "crosspad-core": ">=2.0.0,<3.0.0",
+        "crosspad-gui": ">=2.0.0,<3.0.0"
+    },
+    "build": {
+        "appLibrary": true
+    }
+}
